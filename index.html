@@ -207,6 +207,21 @@
       margin-bottom: 0.5rem;
       display: none;
     }
+    .counter {
+      background: var(--card-dark);
+      padding: 0.5rem 1rem;
+      border-radius: 50px;
+      font-size: 0.9rem;
+      margin-left: 1rem;
+    }
+    .btn-delete {
+      background-color: var(--error);
+      margin-top: 0.5rem;
+      width: 100%;
+    }
+    .btn-delete:hover {
+      background-color: #ff5252;
+    }
     @media (max-width: 600px) {
       .modal-content {
         padding: 1.2rem;
@@ -219,7 +234,10 @@
 </head>
 <body>
   <header>
-    <h1>🛍️ Sun&Style</h1>
+    <div style="display: flex; align-items: center;">
+      <h1>🛍️ Sun&Style</h1>
+      <div class="counter" id="productCounter">0 publicaciones</div>
+    </div>
     <button id="btnAdd">➕ Agregar</button>
   </header>
 
@@ -281,7 +299,8 @@
         </div>
       </div>
       
-      <button id="closeDetail" style="margin-top: 1rem; width: 100%;">Cerrar</button>
+      <button class="btn-delete" id="btnDelete">🗑️ Eliminar Publicación</button>
+      <button id="closeDetail" style="margin-top: 0.5rem; width: 100%;">Cerrar</button>
     </div>
   </div>
 
@@ -303,6 +322,8 @@
 
     // Variables globales
     let selectedFile = null;
+    let currentProductId = null;
+    let productCount = 0;
 
     // Elementos del DOM
     const btnAdd = document.getElementById('btnAdd');
@@ -314,6 +335,14 @@
     const imagenPreview = document.getElementById('imagenPreview');
     const fileName = document.getElementById('fileName');
     const errorFile = document.getElementById('errorFile');
+    const productCounter = document.getElementById('productCounter');
+    const btnDelete = document.getElementById('btnDelete');
+
+    // Actualizar contador de productos
+    function updateProductCounter(count) {
+      productCount = count;
+      productCounter.textContent = `${count} ${count === 1 ? 'publicación' : 'publicaciones'}`;
+    }
 
     // Escuchar cambios en el input de imagen
     imagenInput.addEventListener('change', (e) => {
@@ -324,8 +353,17 @@
         const validTypes = ['image/png', 'image/jpeg'];
         const maxSize = 20 * 1024 * 1024; // 20MB
         
-        if (!validTypes.includes(selectedFile.type) || selectedFile.size > maxSize) {
-          errorFile.textContent = '¡El archivo debe ser PNG/JPG y menor a 20MB!';
+        if (!validTypes.includes(selectedFile.type) {
+          errorFile.textContent = '¡El archivo debe ser PNG o JPG!';
+          errorFile.style.display = 'block';
+          imagenPreview.style.display = 'none';
+          fileName.textContent = '';
+          selectedFile = null;
+          return;
+        }
+        
+        if (selectedFile.size > maxSize) {
+          errorFile.textContent = '¡El archivo es demasiado grande (máximo 20MB)!';
           errorFile.style.display = 'block';
           imagenPreview.style.display = 'none';
           fileName.textContent = '';
@@ -413,6 +451,8 @@
     // Cargar prendas en tiempo real
     db.collection('prendas').orderBy('fecha', 'desc').onSnapshot((snapshot) => {
       productGrid.innerHTML = '';
+      updateProductCounter(snapshot.size);
+      
       snapshot.forEach((doc) => {
         const prenda = doc.data();
         const card = document.createElement('div');
@@ -437,18 +477,30 @@
 
     // Mostrar detalles de la prenda
     function mostrarDetalles(prenda, id) {
+      currentProductId = id;
       document.getElementById('detailNombre').textContent = prenda.nombre;
       document.getElementById('detailImagen').src = prenda.imagen;
       document.getElementById('detailDescripcion').textContent = prenda.descripcion;
       document.getElementById('detailTalla').textContent = prenda.talla;
       document.getElementById('detailPrecio').textContent = prenda.precio.toFixed(2);
 
-      // Generar QR
+      // Generar QR con URL que abre esta publicación
       const qr = qrcode(0, 'L');
-      const qrData = `ID: ${id}\n${prenda.nombre}\n$${prenda.precio}\nTalla: ${prenda.talla}`;
-      qr.addData(qrData);
+      const currentUrl = window.location.href.split('?')[0];
+      const productUrl = `${currentUrl}?product=${id}`;
+      qr.addData(productUrl);
       qr.make();
-      document.getElementById('qrCode').innerHTML = qr.createImgTag(4);
+      
+      // Limpiar contenedor QR antes de agregar el nuevo
+      const qrContainer = document.getElementById('qrCode');
+      qrContainer.innerHTML = '';
+      qrContainer.appendChild(qr.createImgTag(4));
+      
+      // Hacer que el QR sea clickeable
+      qrContainer.querySelector('img').style.cursor = 'pointer';
+      qrContainer.querySelector('img').addEventListener('click', () => {
+        window.location.href = productUrl;
+      });
 
       // Generar código de barras
       const barcodeData = prenda.codigo || id;
@@ -464,11 +516,25 @@
       document.body.style.overflow = 'hidden';
     }
 
+    // Botón para eliminar publicación
+    btnDelete.addEventListener('click', async () => {
+      if (currentProductId && confirm('¿Estás seguro de que quieres eliminar esta publicación?')) {
+        try {
+          await db.collection('prendas').doc(currentProductId).delete();
+          cerrarModales();
+        } catch (error) {
+          console.error("Error al eliminar:", error);
+          alert('Ocurrió un error al eliminar la publicación');
+        }
+      }
+    });
+
     // Cerrar modales
     function cerrarModales() {
       addModal.style.display = 'none';
       detailModal.style.display = 'none';
       document.body.style.overflow = 'auto';
+      currentProductId = null;
     }
 
     document.addEventListener('click', (e) => {
@@ -483,6 +549,21 @@
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') {
         cerrarModales();
+      }
+    });
+
+    // Verificar si hay un producto en la URL al cargar la página
+    window.addEventListener('DOMContentLoaded', () => {
+      const urlParams = new URLSearchParams(window.location.search);
+      const productId = urlParams.get('product');
+      
+      if (productId) {
+        // Buscar el producto y mostrarlo
+        db.collection('prendas').doc(productId).get().then((doc) => {
+          if (doc.exists) {
+            mostrarDetalles(doc.data(), doc.id);
+          }
+        });
       }
     });
   </script>
